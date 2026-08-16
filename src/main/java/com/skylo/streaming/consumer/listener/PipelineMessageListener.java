@@ -27,18 +27,14 @@ public class PipelineMessageListener {
     private static final String MDC_MESSAGE_KEY = "messageKey";
     private static final String MDC_RETRY_COUNT = "retryCount";
 
-    @KafkaListener(
-            topics = "${ordering.topic-name:pipeline-messages}",
-            groupId = "pipeline-consumer-group",
-            containerFactory = "kafkaListenerContainerFactory"
-    )
+    @KafkaListener(topics = "${ordering.topic-name:pipeline-messages}", groupId = "pipeline-consumer-group", containerFactory = "kafkaListenerContainerFactory")
     public void onMessage(
             ConsumerRecord<String, String> record,
             Acknowledgment acknowledgment,
             @Header(name = KafkaHeaders.DELIVERY_ATTEMPT, required = false) Integer deliveryAttempt) {
-        
+
         int attempt = (deliveryAttempt != null) ? deliveryAttempt : 1;
-        
+
         MDC.put(MDC_MESSAGE_KEY, record.key());
         MDC.put(MDC_RETRY_COUNT, String.valueOf(attempt - 1));
 
@@ -59,9 +55,22 @@ public class PipelineMessageListener {
                 MDC.put(MDC_MESSAGE_ID, message.getId());
             }
 
+            if (message == null ||
+                    message.getId() == null || message.getId().isBlank() ||
+                    message.getKey() == null || message.getKey().isBlank() ||
+                    message.getPayload() == null || message.getPayload().isBlank() ||
+                    message.getTimestamp() == null) {
+
+                log.error(
+                        "Rejecting invalid message on partition {}, offset {}. Missing or blank mandatory fields (id, key, payload, timestamp).",
+                        record.partition(), record.offset());
+                throw new NonRetryableException("Consumed message is missing or has blank mandatory fields");
+            }
+
             deliveryClient.deliver(message);
 
-            // Acknowledge the offset only after successful processing/persistance downstream
+            // Acknowledge the offset only after successful processing/persistance
+            // downstream
             acknowledgment.acknowledge();
 
         } finally {
