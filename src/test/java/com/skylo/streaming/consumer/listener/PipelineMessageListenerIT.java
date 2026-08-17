@@ -162,4 +162,42 @@ class PipelineMessageListenerIT {
         assertThat(dltRecord.key()).isEqualTo("device-14");
         assertThat(dltRecord.value()).contains(messageId);
     }
+
+    @Test
+    void testMessageConsumption_RetryExhaustionSendsToDlt() throws Exception {
+        // Arrange
+        String messageId = UUID.randomUUID().toString();
+        MessageDto message = MessageDto.builder()
+                .id(messageId)
+                .key("device-15")
+                .payload("Retry exhaustion test")
+                .timestamp(Instant.now())
+                .build();
+
+        String payload = objectMapper.writeValueAsString(message);
+
+        // Mock delivery client to fail repeatedly with a RetryableException
+        Mockito.doThrow(new RetryableException("Simulated downstream outage"))
+               .when(deliveryClient).deliver(any(MessageDto.class));
+
+        // Act
+        kafkaTemplate.send("pipeline-messages", "device-15", payload).get();
+
+        // Assert - Verify delivery client is invoked exactly 3 times (1 initial + 2 retries)
+        verify(deliveryClient, timeout(10000).times(3)).deliver(any(MessageDto.class));
+
+        // Assert - Verify DLT consumption receives the record after retries are exhausted
+        ConsumerRecords<String, String> records = testDltConsumer.poll(Duration.ofSeconds(15));
+        
+        assertThat(records.count()).isGreaterThanOrEqualTo(1);
+        boolean foundMessage = false;
+        for (ConsumerRecord<String, String> dltRecord : records) {
+            if ("device-15".equals(dltRecord.key()) && dltRecord.value().contains(messageId)) {
+                foundMessage = true;
+                break;
+            }
+        }
+        assertThat(foundMessage).isTrue();
+    }
 }
+

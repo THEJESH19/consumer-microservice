@@ -23,6 +23,9 @@ public class KafkaConsumerErrorHandler {
     @Value("${retry.interval-ms:10000}")
     private long retryIntervalMs;
 
+    @Value("${retry.max-attempts:3}")
+    private int maxAttempts;
+
     @Value("${ordering.topic-name:pipeline-messages}")
     private String mainTopicName;
 
@@ -38,9 +41,11 @@ public class KafkaConsumerErrorHandler {
 
     @Bean
     public CommonErrorHandler commonErrorHandler(DeadLetterPublishingRecoverer dltRecoverer) {
-        log.info("Setting up DefaultErrorHandler with {} ms retry backoff", retryIntervalMs);
+        long backOffAttempts = (maxAttempts <= 0) ? FixedBackOff.UNLIMITED_ATTEMPTS : Math.max(0, maxAttempts - 1);
+        log.info("Setting up DefaultErrorHandler with {} ms retry backoff and {} max attempts", 
+                retryIntervalMs, maxAttempts <= 0 ? "UNLIMITED" : maxAttempts);
         
-        FixedBackOff fixedBackOff = new FixedBackOff(retryIntervalMs, FixedBackOff.UNLIMITED_ATTEMPTS);
+        FixedBackOff fixedBackOff = new FixedBackOff(retryIntervalMs, backOffAttempts);
         DefaultErrorHandler errorHandler = new DefaultErrorHandler(dltRecoverer, fixedBackOff);
 
         // Instantly route to DLT if we encounter a non-retryable exception
